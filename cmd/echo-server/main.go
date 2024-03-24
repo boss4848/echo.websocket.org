@@ -15,6 +15,8 @@ import (
 	"github.com/gorilla/websocket"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
+
+	"encoding/json"
 )
 
 func main() {
@@ -110,12 +112,33 @@ func handler(wr http.ResponseWriter, req *http.Request) {
 	}
 }
 
+type Message struct {
+    URL    string
+    ID     string
+    Result string
+}
+
+var messages = make(map[string]Message)
+var clients = make([]*websocket.Conn, 0)
+
 func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
 	connection, err := upgrader.Upgrade(wr, req, nil)
-	if err != nil {
-		fmt.Printf("%s | %s\n", req.RemoteAddr, err)
-		return
-	}
+    if err != nil {
+        fmt.Printf("%s | %s\n", req.RemoteAddr, err)
+        return
+    }
+
+    clients = append(clients, connection)
+
+    defer func() {
+        connection.Close()
+        for i, client := range clients {
+            if client == connection {
+                clients = append(clients[:i], clients[i+1:]...)
+                break
+            }
+        }
+    }()
 
 	defer connection.Close()
 	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
@@ -140,13 +163,21 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
 			if err != nil {
 				break
 			}
-
+	
 			if messageType == websocket.TextMessage {
-				fmt.Printf("%s | txt | %s\n", req.RemoteAddr, message)
-			} else {
-				fmt.Printf("%s | bin | %d byte(s)\n", req.RemoteAddr, len(message))
+				// Parse the message and store it
+				var msg Message
+				json.Unmarshal(message, &msg)
+				messages[msg.ID] = msg
+	
+				// Broadcast the message to all clients
+				for _, client := range clients {
+					if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
+						fmt.Printf("%s | %s\n", req.RemoteAddr, err)
+					}
+				}
 			}
-
+	
 			err = connection.WriteMessage(messageType, message)
 			if err != nil {
 				break
