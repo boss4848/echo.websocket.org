@@ -405,16 +405,18 @@ func handler(wr http.ResponseWriter, req *http.Request) {
 }
 
 type Message struct {
-    URL    string
-    ID     string
-    Result string
+    url    string
+    id     string
+	width  int
+	height int
+    result string
 }
 
 var messages = make(map[string]Message)
 var clients = make([]*websocket.Conn, 0)
 
 func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
-	connection, err := upgrader.Upgrade(wr, req, nil)
+    connection, err := upgrader.Upgrade(wr, req, nil)
     if err != nil {
         fmt.Printf("%s | %s\n", req.RemoteAddr, err)
         return
@@ -432,54 +434,69 @@ func serveWebSocket(wr http.ResponseWriter, req *http.Request, sendServerHostnam
         }
     }()
 
-	defer connection.Close()
-	fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
+    defer connection.Close()
+    fmt.Printf("%s | upgraded to websocket\n", req.RemoteAddr)
 
-	var message []byte
+    var message []byte
 
-	if sendServerHostname {
-		host, err := os.Hostname()
-		if err == nil {
-			message = []byte(fmt.Sprintf("Request served by %s", host))
-		} else {
-			message = []byte(fmt.Sprintf("Server hostname unknown: %s", err.Error()))
-		}
-	}
+    if sendServerHostname {
+        host, err := os.Hostname()
+        if err == nil {
+            // Create a Message struct
+            msg := Message{
+                url:    req.URL.Path,
+                id:     "server",
+                width:  0,
+                height: 0,
+                result: fmt.Sprintf("Request served by %s", host),
+            }
 
-	err = connection.WriteMessage(websocket.TextMessage, message)
-	if err == nil {
-		var messageType int
+            // Marshal the Message struct into a JSON string
+            message, err = json.Marshal(msg)
+            if err != nil {
+                fmt.Printf("%s | %s\n", req.RemoteAddr, err)
+                return
+            }
+        } else {
+            message = []byte(fmt.Sprintf("Server hostname unknown: %s", err.Error()))
+        }
+    }
 
-		for {
-			messageType, message, err = connection.ReadMessage()
-			if err != nil {
-				break
-			}
-	
-			if messageType == websocket.TextMessage {
-				// Parse the message and store it
-				var msg Message
-				json.Unmarshal(message, &msg)
-				messages[msg.ID] = msg
-	
-				// Broadcast the message to all clients
-				for _, client := range clients {
-					if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
-						fmt.Printf("%s | %s\n", req.RemoteAddr, err)
-					}
-				}
-			}
-	
-			err = connection.WriteMessage(messageType, message)
-			if err != nil {
-				break
-			}
-		}
-	}
+    err = connection.WriteMessage(websocket.TextMessage, message)
+    if err == nil {
+        var messageType int
+        var message []byte
 
-	if err != nil {
-		fmt.Printf("%s | %s\n", req.RemoteAddr, err)
-	}
+        for {
+            messageType, message, err = connection.ReadMessage()
+            if err != nil {
+                break
+            }
+
+            if messageType == websocket.TextMessage {
+                // Parse the message and store it
+                var msg Message
+                json.Unmarshal(message, &msg)
+                messages[msg.id] = msg
+
+                // Broadcast the message to all clients
+                for _, client := range clients {
+                    if err := client.WriteMessage(websocket.TextMessage, message); err != nil {
+                        fmt.Printf("%s | %s\n", req.RemoteAddr, err)
+                    }
+                }
+            }
+
+            err = connection.WriteMessage(messageType, message)
+            if err != nil {
+                break
+            }
+        }
+    }
+
+    if err != nil {
+        fmt.Printf("%s | %s\n", req.RemoteAddr, err)
+    }
 }
 
 func serveHTTP(wr http.ResponseWriter, req *http.Request, sendServerHostname bool) {
